@@ -7,7 +7,7 @@ const { Client } = require('discord.js-selfbot-v13');
 // Configuration - Railway deployment ready
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const USERNAME_WEBHOOK_URL = process.env.USERNAME_WEBHOOK_URL;
-const ITEM_IDS = process.env.ITEM_IDS || '30371876,689391156,93136802,25267538,323419455,398674241,439945864'; // Comma-separated item IDs
+const ITEM_IDS = process.env.ITEM_IDS || '416832622,315549204,169444515,507795810,193696364'; // Comma-separated item IDs
 const NEXUS_ADMIN_KEY = process.env.NEXUS_ADMIN_KEY;
 const NEXUS_API_URL = 'https://discord.nexusdevtools.com/lookup/roblox';
 
