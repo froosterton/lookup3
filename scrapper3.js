@@ -9,7 +9,7 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const USERNAME_WEBHOOK_URL = process.env.USERNAME_WEBHOOK_URL;
 const ITEM_IDS = process.env.ITEM_IDS || '22946161,169444030,439985494,12565866,64220933,4390888537,2565909803,568921483,215718515'; // Comma-separated item IDs
 const NEXUS_ADMIN_KEY = process.env.NEXUS_ADMIN_KEY;
-const NEXUS_API_URL = 'https://discord.latticesite.com/lookup/roblox';
+const NEXUS_API_URL = process.env.NEXUS_API_URL || 'https://discord.latticesite.com/lookup/roblox';
 
 // Discord API configuration (for reading back messages)
 const USER_TOKEN = process.env.USER_TOKEN;
@@ -1055,10 +1055,12 @@ function extractDiscordFromRecord(record) {
         return `${record.discord_username}#${record.discriminator}`;
     }
     if (record.discord_username) return String(record.discord_username);
+    if (record.global_name) return String(record.global_name);
+    if (record.display_name) return String(record.display_name);
+    if (record.tag && typeof record.tag === 'string') return record.tag;
 
-    // Nexus /lookup/roblox currently returns objects like:
-    // { "username": "<discord username>", "score": 1100, "server_id": "..." }
-    // So treat "username" as the Discord username when present.
+    // Nexus /lookup/roblox returns entries like:
+    // { "username": "<discord username>", "score": 1100, "server_ids": [...] }
     if (record.username) return String(record.username);
 
     // Fallback: any field whose key mentions "discord"
@@ -1070,28 +1072,52 @@ function extractDiscordFromRecord(record) {
     return null;
 }
 
+/** Normalize Nexus JSON — API uses `data`; some clients/docs call the array `payload`. */
+function getNexusDiscordRecords(body) {
+    if (!body || typeof body !== 'object') return [];
+    const from = (v) => (Array.isArray(v) ? v : []);
+    let records = from(body.data);
+    if (!records.length) records = from(body.payload);
+    if (!records.length && body.result && typeof body.result === 'object') {
+        records = from(body.result.data).length ? from(body.result.data) : from(body.result.payload);
+    }
+    return records.filter(r => r && typeof r === 'object');
+}
+
 async function lookupDiscordAndSend(robloxUsername, rolimonsData) {
+    if (!NEXUS_ADMIN_KEY) {
+        console.error('❌ NEXUS_ADMIN_KEY is not set — cannot call Nexus lookup');
+        return false;
+    }
     try {
         const response = await axios.get(NEXUS_API_URL, {
             params: { query: robloxUsername },
             headers: {
-                'x-admin-key': NEXUS_ADMIN_KEY
-            }
+                'X-Access-Key': NEXUS_ADMIN_KEY
+            },
+            validateStatus: () => true
         });
 
-        const body = response.data || {};
-        const records = Array.isArray(body.data) ? body.data : [];
-
-        if (!records.length) {
-            console.log(`ℹ️ No Discord found for ${robloxUsername} (Nexus API returned empty data[])`);
+        const body = response.data;
+        if (response.status !== 200) {
+            const detail = body && (body.detail ?? body.message);
+            console.error(`❌ Nexus API HTTP ${response.status} for ${robloxUsername}:`, detail || body || '(no body)');
             return false;
         }
 
-        const discordRecord = records[0];
-        const discordValue = extractDiscordFromRecord(discordRecord);
+        if (body && body.ok === false && body.error_msg) {
+            console.log(`ℹ️ Nexus ok=false for ${robloxUsername}: ${body.error_msg}`);
+        }
+
+        let records = getNexusDiscordRecords(body);
+        records = [...records].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+
+        const discordRecord = records.find(r => extractDiscordFromRecord(r));
+        const discordValue = discordRecord ? extractDiscordFromRecord(discordRecord) : null;
 
         if (!discordValue) {
-            console.log(`ℹ️ Could not extract Discord field from Nexus API response for ${robloxUsername}`);
+            const keys = body && typeof body === 'object' ? Object.keys(body) : [];
+            console.log(`ℹ️ No Discord found for ${robloxUsername} (Nexus: empty or unparseable records; top-level keys: ${keys.join(', ') || 'n/a'})`);
             return false;
         }
 
@@ -1099,7 +1125,8 @@ async function lookupDiscordAndSend(robloxUsername, rolimonsData) {
         await sendUsernameOnlyToWebhook(discordValue);
         return true;
     } catch (error) {
-        console.error(`❌ Nexus API error for ${robloxUsername}:`, error.message);
+        const data = error.response && error.response.data;
+        console.error(`❌ Nexus API error for ${robloxUsername}:`, error.message, data ? JSON.stringify(data).slice(0, 300) : '');
         return false;
     }
 }
